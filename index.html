@@ -1,0 +1,449 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BeatShader Visualizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/addons/p5.sound.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: 'Orbitron', sans-serif;
+            color: #fff;
+        }
+        #canvas-container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: center;
+            position: relative;
+        }
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            pointer-events: none;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            z-index: 100;
+            pointer-events: none;
+        }
+        button {
+            pointer-events: auto;
+            background: rgba(0,0,0,0.5);
+            color: #fff;
+            border: 1px solid #00ffaa;
+            padding: 10px 20px;
+            margin: 0 10px;
+            font-family: 'Orbitron', sans-serif;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        button:hover {
+            background: rgba(0,255,170,0.2);
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .file-label {
+            pointer-events: auto;
+            background: rgba(0,0,0,0.5);
+            color: #fff;
+            border: 1px solid #00ffaa;
+            padding: 10px 20px;
+            margin: 0 10px;
+            font-family: 'Orbitron', sans-serif;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .file-label:hover {
+            background: rgba(0,255,170,0.2);
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #00ffaa;
+            text-align: center;
+        }
+        .start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0,0,0,0.8);
+            z-index: 200;
+        }
+        .start-screen h1 {
+            font-size: 48px;
+            color: #00ffaa;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        .start-screen p {
+            font-size: 18px;
+            margin-bottom: 30px;
+            text-align: center;
+            max-width: 600px;
+        }
+        .start-button {
+            pointer-events: auto;
+            background: rgba(0,255,170,0.2);
+            color: #fff;
+            border: 2px solid #00ffaa;
+            padding: 15px 40px;
+            font-size: 20px;
+            font-family: 'Orbitron', sans-serif;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .start-button:hover {
+            background: rgba(0,255,170,0.4);
+        }
+    </style>
+
+<base target="_self">
+
+
+    </head><body><div id="canvas-container"></div>
+    <div id="ui-container">
+        <div id="freq-display"></div>
+    </div>
+    <div id="controls">
+        <label for="file-input" class="file-label">Choose Audio</label>
+        <input type="file" id="file-input" accept="audio/*">
+        <button id="play-button">Play</button>
+        <button id="pause-button">Pause</button>
+    </div>
+    <div id="start-screen" class="start-screen">
+        <h1>BeatShader Visualizer</h1>
+        <p>A reactive audio-visual experience where sound shapes a fractal universe. Bass warps space, mids paint color, and treble creates crystalline structures.</p>
+        <button id="start-button" class="start-button">Begin Experience</button>
+    </div>
+
+    <script>
+        let soundFile;
+        let fft;
+        let audioContext;
+        let audioInitialized = false;
+        let audioLoaded = false;
+        let gameState = 'start'; // start, loading, playing, paused
+        
+        let bassLevel = 0;
+        let midLevel = 0;
+        let trebleLevel = 0;
+        let beatDetected = false;
+        
+        // Visualization parameters
+        let fractalScale = 1.0;
+        let colorHue = 0;
+        let crystalDetail = 0;
+        let mode = 0; // 0 = fractal tunnel, 1 = plasma clouds, 2 = crystal growth
+        
+        // Time tracking
+        let lastBeatTime = 0;
+        let beatInterval = 500;
+        
+        function preload() {
+            // No preloading to avoid audio context issues
+        }
+
+        function setup() {
+            let canvas = createCanvas(windowWidth, windowHeight, WEBGL);
+            canvas.parent('canvas-container');
+            
+            colorMode(HSB, 360, 100, 100, 1);
+            
+            // Initialize FFT but don't start audio context yet
+            fft = new p5.FFT(0.8, 64);
+            
+            // Setup UI elements
+            document.getElementById('start-button').addEventListener('click', startExperience);
+            document.getElementById('file-input').addEventListener('change', handleFileSelect);
+            document.getElementById('play-button').addEventListener('click', startAudio);
+            document.getElementById('pause-button').addEventListener('click', pauseAudio);
+            
+            // Hide controls initially
+            document.getElementById('controls').style.display = 'none';
+            
+            // Prevent context menu
+            document.addEventListener('contextmenu', event => event.preventDefault());
+        }
+
+        function startExperience() {
+            document.getElementById('start-screen').style.display = 'none';
+            document.getElementById('controls').style.display = 'flex';
+            gameState = 'loading';
+        }
+
+        function handleFileSelect(event) {
+            if (event.target.files.length > 0) {
+                const file = event.target.files[0];
+                const url = URL.createObjectURL(file);
+                
+                soundFile = new p5.SoundFile(url, () => {
+                    audioLoaded = true;
+                    document.getElementById('play-button').disabled = false;
+                }, (err) => {
+                    console.error('Error loading audio file:', err);
+                });
+            }
+        }
+
+        function startAudio() {
+            if (!audioInitialized && audioLoaded) {
+                getAudioContext().resume().then(() => {
+                    audioInitialized = true;
+                    soundFile.loop();
+                    fft.setInput(soundFile);
+                    gameState = 'playing';
+                });
+            } else if (audioInitialized && audioLoaded) {
+                soundFile.play();
+                gameState = 'playing';
+            }
+        }
+
+        function pauseAudio() {
+            if (audioInitialized && soundFile.isPlaying()) {
+                soundFile.pause();
+                gameState = 'paused';
+            }
+        }
+
+        function analyzeAudio() {
+            if (!fft || !audioInitialized) return;
+            
+            let spectrum = fft.analyze();
+            
+            // Split spectrum into bass, mid, treble ranges
+            bassLevel = fft.getEnergy(20, 140);
+            midLevel = fft.getEnergy(140, 4000);
+            trebleLevel = fft.getEnergy(4000, 12000);
+            
+            // Simple beat detection
+            let currentTime = millis();
+            if (bassLevel > 200 && currentTime - lastBeatTime > beatInterval) {
+                beatDetected = true;
+                lastBeatTime = currentTime;
+                beatInterval = random(300, 800);
+            } else {
+                beatDetected = false;
+            }
+        }
+
+        function drawTunnel() {
+            rotateX(frameCount * 0.01);
+            rotateY(frameCount * 0.005);
+            
+            let detailLevel = map(trebleLevel, 0, 255, 3, 8);
+            let tunnelSize = map(bassLevel, 0, 255, 50, 200);
+            
+            for (let i = 0; i < 10; i++) {
+                push();
+                translate(0, 0, -i * 200);
+                scale(1 + i * 0.1 * fractalScale);
+                
+                let hue = (colorHue + i * 10) % 360;
+                fill(hue, 80, 80, 0.8);
+                noStroke();
+                
+                // Warp geometry based on bass
+                let warpAmount = map(bassLevel, 0, 255, 0, 0.5);
+                let time = frameCount * 0.01;
+                
+                beginShape();
+                for (let a = 0; a < TWO_PI; a += TWO_PI / detailLevel) {
+                    let xoff = cos(a + time) * warpAmount;
+                    let yoff = sin(a + time) * warpAmount;
+                    let x = cos(a) * (tunnelSize + xoff * 50);
+                    let y = sin(a) * (tunnelSize + yoff * 50);
+                    vertex(x, y, 0);
+                }
+                endShape(CLOSE);
+                
+                pop();
+            }
+            
+            // Beat-triggered effects
+            if (beatDetected) {
+                fractalScale = 1.5;
+                colorHue = (colorHue + 30) % 360;
+            } else {
+                fractalScale = lerp(fractalScale, 1.0, 0.05);
+            }
+        }
+
+        function drawPlasma() {
+            rotateX(frameCount * 0.005);
+            rotateY(frameCount * 0.003);
+            
+            let cloudSize = map(bassLevel, 0, 255, 100, 300);
+            let cloudDetail = map(trebleLevel, 0, 255, 3, 10);
+            
+            // Color shifting based on mids
+            let baseHue = map(midLevel, 0, 255, 0, 360);
+            let hueRange = map(bassLevel, 0, 255, 30, 120);
+            
+            for (let i = 0; i < 5; i++) {
+                push();
+                translate(
+                    random(-100, 100),
+                    random(-100, 100),
+                    random(-100, 100)
+                );
+                
+                let size = cloudSize * (0.5 + i * 0.2);
+                let hue = (baseHue + random(-hueRange, hueRange)) % 360;
+                fill(hue, 80, 80, 0.6);
+                noStroke();
+                
+                beginShape();
+                for (let a = 0; a < TWO_PI; a += TWO_PI / cloudDetail) {
+                    let x = cos(a) * size;
+                    let y = sin(a) * size;
+                    vertex(x, y, 0);
+                }
+                endShape(CLOSE);
+                
+                pop();
+            }
+            
+            // Beat-triggered effects
+            if (beatDetected) {
+                colorHue = (colorHue + 60) % 360;
+            }
+        }
+
+        function drawCrystals() {
+            rotateX(frameCount * 0.002);
+            rotateY(frameCount * 0.003);
+            
+            let crystalCount = map(midLevel, 0, 255, 3, 15);
+            let crystalSize = map(bassLevel, 0, 255, 20, 100);
+            let crystalDetail = map(trebleLevel, 0, 255, 3, 8);
+            
+            for (let i = 0; i < crystalCount; i++) {
+                push();
+                let angle = map(i, 0, crystalCount, 0, TWO_PI);
+                let radius = 150;
+                translate(
+                    cos(angle) * radius,
+                    sin(angle) * radius,
+                    sin(frameCount * 0.01 + angle) * 50
+                );
+                
+                let hue = (colorHue + i * 30) % 360;
+                fill(hue, 80, 80, 0.9);
+                stroke(hue, 100, 100);
+                strokeWeight(1);
+                
+                // Crystal shape
+                beginShape();
+                for (let a = 0; a < TWO_PI; a += TWO_PI / crystalDetail) {
+                    let x = cos(a) * crystalSize;
+                    let y = sin(a) * crystalSize;
+                    vertex(x, y, 0);
+                }
+                endShape(CLOSE);
+                
+                // Beat-triggered growth
+                if (beatDetected) {
+                    push();
+                    translate(0, 0, crystalSize * 0.5);
+                    scale(1, 1, 2);
+                    beginShape();
+                    for (let a = 0; a < TWO_PI; a += TWO_PI / crystalDetail) {
+                        let x = cos(a) * crystalSize * 0.3;
+                        let y = sin(a) * crystalSize * 0.3;
+                        vertex(x, y, 0);
+                    }
+                    endShape(CLOSE);
+                    pop();
+                }
+                
+                pop();
+            }
+            
+            // Beat-triggered effects
+            if (beatDetected) {
+                colorHue = (colorHue + 15) % 360;
+            }
+        }
+
+        function draw() {
+            background(0, 0, 10);
+            
+            // Analyze audio if playing
+            if (gameState === 'playing') {
+                analyzeAudio();
+            }
+            
+            // Draw visualization based on current mode
+            switch (mode) {
+                case 0:
+                    drawTunnel();
+                    break;
+                case 1:
+                    drawPlasma();
+                    break;
+                case 2:
+                    drawCrystals();
+                    break;
+            }
+            
+            // Display frequency levels
+            if (gameState === 'playing' || gameState === 'paused') {
+                let freqDisplay = document.getElementById('freq-display');
+                freqDisplay.innerHTML = `
+                    <div>Bass: ${Math.round(bassLevel)}</div>
+                    <div>Mid: ${Math.round(midLevel)}</div>
+                    <div>Treble: ${Math.round(trebleLevel)}</div>
+                    <div>Mode: ${['Tunnel', 'Plasma', 'Crystals'][mode]}</div>
+                `;
+            }
+            
+            // Cycle modes every 30 seconds
+            if (frameCount % (30 * 60) === 0 && gameState === 'playing') {
+                mode = (mode + 1) % 3;
+            }
+        }
+
+        function keyPressed() {
+            if (key === ' ') {
+                if (gameState === 'playing') {
+                    pauseAudio();
+                } else if (gameState === 'paused') {
+                    startAudio();
+                }
+            } else if (key === 'm' || key === 'M') {
+                mode = (mode + 1) % 3;
+            }
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+    </script>
+
+              
+          
+                
+          
+              
+</body></html>
